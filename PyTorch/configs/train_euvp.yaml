@@ -1,7 +1,7 @@
 
 # dataset info
 dataset_name: "EUVP" 
-dataset_path: "/mnt/data1/ImageEnhance/EUVP/Paired/"
+dataset_path: "/kaggle/input/euvp-underwater/EUVP Dataset/Paired"
 
 # image info
 chans: 3
