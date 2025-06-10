@@ -57,8 +57,12 @@ ckpt_interval = cfg["ckpt_interval"]
 ## create dir for model and validation data
 samples_dir = os.path.join("samples/FunieGAN/", dataset_name)
 checkpoint_dir = os.path.join("checkpoints/FunieGAN/", dataset_name)
+results_dir = os.path.join("results/FunieGAN/", dataset_name)  # Add results directory
+
+# Create all necessary directories
 os.makedirs(samples_dir, exist_ok=True)
 os.makedirs(checkpoint_dir, exist_ok=True)
+os.makedirs(results_dir, exist_ok=True)  # Ensure results directory exists
 
 
 """ FunieGAN specifics: loss functions and patch-size
@@ -89,9 +93,27 @@ if args.epoch == 0:
     generator.apply(Weights_Normal)
     discriminator.apply(Weights_Normal)
 else:
-    generator.load_state_dict(torch.load("checkpoints/FunieGAN/%s/generator_%d.pth" % (dataset_name, args.epoch)))
-    discriminator.load_state_dict(torch.load("checkpoints/FunieGAN/%s/discriminator_%d.pth" % (dataset_name, epoch)))
-    print ("Loaded model from epoch %d" %(epoch))
+    # Fixed torch.load with weights_only=True for security
+    try:
+        generator.load_state_dict(torch.load(
+            "checkpoints/FunieGAN/%s/generator_%d.pth" % (dataset_name, args.epoch),
+            map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+            weights_only=True
+        ))
+        discriminator.load_state_dict(torch.load(
+            "checkpoints/FunieGAN/%s/discriminator_%d.pth" % (dataset_name, epoch),
+            map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+            weights_only=True
+        ))
+        print ("Loaded model from epoch %d" %(epoch))
+    except FileNotFoundError:
+        print(f"Model files not found for epoch {args.epoch}. Starting with initialized weights.")
+        generator.apply(Weights_Normal)
+        discriminator.apply(Weights_Normal)
+    except Exception as e:
+        print(f"Error loading models: {e}. Starting with initialized weights.")
+        generator.apply(Weights_Normal)
+        discriminator.apply(Weights_Normal)
 
 # Optimizers
 optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr_rate, betas=(lr_b1, lr_b2))
@@ -121,7 +143,14 @@ val_dataloader = DataLoader(
 
 
 ## Training pipeline
+print(f"Starting training from epoch {epoch} to {num_epochs}")
+print(f"Dataset: {dataset_name}, Batch size: {batch_size}, Learning rate: {lr_rate}")
+
 for epoch in range(epoch, num_epochs):
+    epoch_d_loss = 0.0
+    epoch_g_loss = 0.0
+    num_batches = len(dataloader)
+    
     for i, batch in enumerate(dataloader):
         # Model inputs
         imgs_distorted = Variable(batch["A"].type(Tensor))
@@ -135,7 +164,7 @@ for epoch in range(epoch, num_epochs):
         imgs_fake = generator(imgs_distorted)
         pred_real = discriminator(imgs_good_gt, imgs_distorted)
         loss_real = Adv_cGAN(pred_real, valid)
-        pred_fake = discriminator(imgs_fake, imgs_distorted)
+        pred_fake = discriminator(imgs_fake.detach(), imgs_distorted)  # Use .detach() to avoid computing gradients
         loss_fake = Adv_cGAN(pred_fake, fake)
         # Total loss: real + fake (standard PatchGAN)
         loss_D = 0.5 * (loss_real + loss_fake) * 10.0 # 10x scaled for stability
@@ -154,26 +183,50 @@ for epoch in range(epoch, num_epochs):
         loss_G.backward()
         optimizer_G.step()
 
+        # Accumulate losses for epoch average
+        epoch_d_loss += loss_D.item()
+        epoch_g_loss += loss_G.item()
+
         ## Print log
-        if not i%50:
-            sys.stdout.write("\r[Epoch %d/%d: batch %d/%d] [DLoss: %.3f, GLoss: %.3f, AdvLoss: %.3f]"
+        if not i % 50:
+            sys.stdout.write("\r[Epoch %d/%d: batch %d/%d] [DLoss: %.4f, GLoss: %.4f, AdvLoss: %.4f, L1Loss: %.4f, VGGLoss: %.4f]"
                               %(
                                 epoch, num_epochs, i, len(dataloader),
                                 loss_D.item(), loss_G.item(), loss_GAN.item(),
+                                loss_1.item(), loss_con.item()
                                )
             )
+            
         ## If at sample interval save image
         batches_done = epoch * len(dataloader) + i
         if batches_done % val_interval == 0:
-            imgs = next(iter(val_dataloader))
-            imgs_val = Variable(imgs["val"].type(Tensor))
-            imgs_gen = generator(imgs_val)
-            img_sample = torch.cat((imgs_val.data, imgs_gen.data), -2)
-            save_image(img_sample, "samples/FunieGAN/%s/%s.png" % (dataset_name, batches_done), nrow=5, normalize=True)
+            try:
+                imgs = next(iter(val_dataloader))
+                imgs_val = Variable(imgs["val"].type(Tensor))
+                imgs_gen = generator(imgs_val)
+                img_sample = torch.cat((imgs_val.data, imgs_gen.data), -2)
+                sample_path = os.path.join(samples_dir, f"{batches_done}.png")
+                save_image(img_sample, sample_path, nrow=5, normalize=True)
+                print(f"\nSaved sample: {sample_path}")
+            except Exception as e:
+                print(f"\nWarning: Could not save sample at batch {batches_done}: {e}")
+
+    # Print epoch summary
+    avg_d_loss = epoch_d_loss / num_batches
+    avg_g_loss = epoch_g_loss / num_batches
+    print(f"\nEpoch {epoch} Summary - Avg D Loss: {avg_d_loss:.4f}, Avg G Loss: {avg_g_loss:.4f}")
 
     ## Save model checkpoints
     if (epoch % ckpt_interval == 0):
-        torch.save(generator.state_dict(), "checkpoints/FunieGAN/%s/generator_%d.pth" % (dataset_name, epoch))
-        torch.save(discriminator.state_dict(), "checkpoints/FunieGAN/%s/discriminator_%d.pth" % (dataset_name, epoch))
+        try:
+            gen_path = os.path.join(checkpoint_dir, f"generator_{epoch}.pth")
+            disc_path = os.path.join(checkpoint_dir, f"discriminator_{epoch}.pth")
+            torch.save(generator.state_dict(), gen_path)
+            torch.save(discriminator.state_dict(), disc_path)
+            print(f"Saved checkpoints for epoch {epoch}")
+        except Exception as e:
+            print(f"Warning: Could not save checkpoints for epoch {epoch}: {e}")
+
+print("Training completed!")
 
 
