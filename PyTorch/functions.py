@@ -27,7 +27,7 @@ def denorm(x):
 
 def norm(x):
     out = (x -0.5) *2
-    return out.clamp(0, 1)
+    return out.clamp(-1, 1)
 
 #def denorm2image(I1,I2):
 #    out = (I1-I1.mean())/(I1.max()-I1.min())
@@ -356,42 +356,30 @@ def dilate_mask(mask,opt):
     mask = (mask-mask.min())/(mask.max()-mask.min())
     return mask
 
-def draw_concat(Gs,Zs,reals,NoiseAmp,in_s,mode,m_noise,m_image,opt):
+def draw_concat_enhancement(Gs, Zs, reals, NoiseAmp, in_s, m_image, opt):
+    """
+    Image enhancement via multi-scale generator cascade.
+    Assumes in_s is a real (low-quality) image to enhance.
+    """
     G_z = in_s
     if len(Gs) > 0:
-        if mode == 'rand':
-            count = 0
-            pad_noise = int(((opt.ker_size-1)*opt.num_layer)/2)
-            if opt.mode == 'animation_train':
-                pad_noise = 0
-            for G,Z_opt,real_curr,real_next,noise_amp in zip(Gs,Zs,reals,reals[1:],NoiseAmp):
-                if count == 0:
-                    z = generate_noise([1, Z_opt.shape[2] - 2 * pad_noise, Z_opt.shape[3] - 2 * pad_noise], device=opt.device)
-                    z = z.expand(1, 3, z.shape[2], z.shape[3])
-                else:
-                    z = generate_noise([opt.nc_z,Z_opt.shape[2] - 2 * pad_noise, Z_opt.shape[3] - 2 * pad_noise], device=opt.device)
-                z = m_noise(z)
-                G_z = G_z[:,:,0:real_curr.shape[2],0:real_curr.shape[3]]
-                G_z = m_image(G_z)
-                z, G_z = align_tensors(z, G_z)
-                z_in = noise_amp*z+G_z
-                G_z = G(z_in.detach())
-                G_z = imresize(G_z,1/opt.scale_factor,opt)
-                G_z = G_z[:,:,0:real_next.shape[2],0:real_next.shape[3]]
-                count += 1
-        if mode == 'rec':
-            count = 0
-            for G,Z_opt,real_curr,real_next,noise_amp in zip(Gs,Zs,reals,reals[1:],NoiseAmp):
-                G_z = G_z[:, :, 0:real_curr.shape[2], 0:real_curr.shape[3]]
-                G_z = m_image(G_z)
-                Z_opt, G_z = align_tensors(Z_opt, G_z)
-                z_in = noise_amp*Z_opt+G_z
-                G_z = G(z_in.detach())
-                G_z = imresize(G_z,1/opt.scale_factor,opt)
-                G_z = G_z[:,:,0:real_next.shape[2],0:real_next.shape[3]]
-                #if count != (len(Gs)-1):
-                #    G_z = m_image(G_z)
-                count += 1
+        for idx, (G, Z_opt, real_curr, real_next, noise_amp) in enumerate(zip(Gs, Zs, reals, reals[1:], NoiseAmp)):
+            # Resize to match current scale
+            G_z = G_z[:, :, 0:real_curr.shape[2], 0:real_curr.shape[3]]
+            G_z = m_image(G_z)
+
+            # Optional: generate small noise or skip entirely
+            z = torch.zeros_like(Z_opt, device=opt.device)  # no noise (or use low-noise)
+            z, G_z = align_tensors(z, G_z)
+            z_in = G_z + noise_amp * z  # weak noise to avoid artifacts
+
+            # Refine image
+            G_z = G(z_in.detach())
+
+            # Upscale for next scale
+            G_z = imresize(G_z, 1 / opt.scale_factor, opt)
+            G_z = G_z[:, :, 0:real_next.shape[2], 0:real_next.shape[3]]
+
     return G_z
 
 def align_tensors(a, b):

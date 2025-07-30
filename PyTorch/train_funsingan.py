@@ -94,8 +94,8 @@ def train_single_image_with_funiegan(opt):
 
     # Initialize lists to store generators, noise, and noise amplitudes
     Gs, Zs, NoiseAmp = [], [], []
-    in_s = torch.full_like(reals[0], 0, device=opt.device)
-
+    #in_s = torch.full_like(reals[0], 0, device=opt.device)
+    in_s = real_
     # Train at each scale
     for scale_num in range(opt.stop_scale + 1):
         print(f"\n=== Training Scale {scale_num} ===")
@@ -153,9 +153,10 @@ def train_single_image_with_funiegan(opt):
 
             # Handle first scale differently
             if scale_num == 0:
-                z_prev = torch.full_like(noise_, 0)
-                prev = m_image(z_prev)
-                opt.noise_amp = 1
+                prev = m_image(real)
+                z_prev = m_noise(noise_)
+                opt.noise_amp = 0.05  # minimal noise for robustness
+                noise = opt.noise_amp * z_prev + prev
             else:
                 # Generate previous scale output
                 prev = functions.draw_concat(Gs, Zs, reals, NoiseAmp, in_s, 'rand', m_noise, m_image, opt)
@@ -173,7 +174,7 @@ def train_single_image_with_funiegan(opt):
                 # Resize prev to match noise_ dimensions
                 prev = torch.nn.functional.interpolate(prev, size=(noise_.shape[2], noise_.shape[3]), mode='bilinear', align_corners=False)
             
-            noise = opt.noise_amp * noise_ + prev
+            noise = prev
 
             # =================
             # Train Discriminator
