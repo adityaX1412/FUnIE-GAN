@@ -32,6 +32,11 @@ class UNetUp(nn.Module):
 
     def forward(self, x, skip_input):
         x = self.model(x)
+        if x.shape[2:] != skip_input.shape[2:]:
+         h = min(x.shape[2], skip_input.shape[2])
+         w = min(x.shape[3], skip_input.shape[3])
+         x = x[:, :, :h, :w]
+         skip_input = skip_input[:, :, :h, :w]
         x = torch.cat((x, skip_input), 1)
         return x
 
@@ -96,6 +101,11 @@ class DiscriminatorFunieGAN(nn.Module):
 
     def forward(self, img_A, img_B):
         # Concatenate image and condition image by channels to produce input
+        if img_A.shape[2:] != img_B.shape[2:]:
+         h = min(img_A.shape[2], img_B.shape[2])
+         w = min(img_A.shape[3], img_B.shape[3])
+         img_A = img_A[:, :, :h, :w]
+         img_B = img_B[:, :, :h, :w]
         img_input = torch.cat((img_A, img_B), 1)
         return self.model(img_input)
 

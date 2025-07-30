@@ -27,7 +27,7 @@ from utils.data_utils import GetTrainingPairs, GetValImage
 
 ## get configs and training options
 parser = argparse.ArgumentParser()
-parser.add_argument("--cfg_file", type=str, default="configs/train_euvp.yaml")
+parser.add_argument("--cfg_file", type=str, default="/kaggle/working/UIE/PyTorch/configs/train_euvp.yaml")
 parser.add_argument("--epoch", type=int, default=0, help="which epoch to start from")
 parser.add_argument("--num_epochs", type=int, default=50, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=8, help="size of the batches")
