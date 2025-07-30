@@ -157,6 +157,7 @@ def train_single_image_with_funiegan(opt):
                 #z_prev = m_noise(noise_)
                 #opt.noise_amp = 0.05  # minimal noise for robustness
                 #noise = opt.noise_amp * z_prev + prev
+                opt.noise_amp = opt.noise_amp_init
                 noise = prev
             else:
                 # Generate previous scale output
