@@ -356,7 +356,7 @@ def dilate_mask(mask,opt):
     mask = (mask-mask.min())/(mask.max()-mask.min())
     return mask
 
-def draw_concat_enhancement(Gs, Zs, reals, NoiseAmp, in_s, m_image, opt):
+def draw_concat(Gs, Zs, reals, NoiseAmp, in_s, m_image, opt):
     """
     Image enhancement via multi-scale generator cascade.
     Assumes in_s is a real (low-quality) image to enhance.
