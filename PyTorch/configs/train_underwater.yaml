@@ -1,5 +1,5 @@
-input_dir: /kaggle/working/UIE/data
-input_name: col.jpg
+input_dir: /kaggle/input/euvp-underwater/EUVP Dataset/Paired/underwater_dark
+input_name: /trainA/264286_00007889.jpg
 nfc_init: 64
 min_nfc_init: 32
 ker_size: 3
