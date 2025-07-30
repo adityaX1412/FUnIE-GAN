@@ -1,4 +1,3 @@
-
 import os
 import math
 import yaml
@@ -17,8 +16,9 @@ from torchvision.utils import save_image
 def get_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/train_underwater.yaml", help="Path to config file")
-    parser.add_argument("--input_dir", type=str, default="/kaggle/working/UIE/data", help="Input directory")
-    parser.add_argument("--input_name", type=str, default="col.jpg", help="Input image name")
+    parser.add_argument("--input_dir", type=str, default="/kaggle/input/euvp-underwater/EUVP Dataset/Paired/underwater_dark", help="Input directory")
+    parser.add_argument("--input_name", type=str, default="/trainA/264286_00007889.jpg", help="Input image name")
+    parser.add_argument("--gt_name", type=str, default="/trainB/264286_00007889.jpg", help="Input image name")
     parser.add_argument("--nfc_init", type=int, default=64, help="Initial number of filters in conv layers")
     parser.add_argument("--min_nfc_init", type=int, default=32, help="Minimum number of filters")
     parser.add_argument("--ker_size", type=int, default=3, help="Kernel size")
@@ -70,13 +70,23 @@ def train_single_image_with_funiegan(opt):
     """Train FunieGAN on a single image using multi-scale approach"""
     print(f"Training on device: {opt.device}")
     print(f"Input image: {os.path.join(opt.input_dir, opt.input_name)}")
+    print(f"GT image: {os.path.join(opt.input_dir, opt.gt_name)}")
     
-    # Read and preprocess image
+    # Read and preprocess input image (distorted)
     real_ = functions.read_image(opt)
     real = imresize(real_, opt.scale1, opt)
     real_ = resize_tensor_to_multiple_of_32(real_, opt)
     reals = []
     reals = functions.creat_reals_pyramid(real, reals, opt)
+    
+    # Read and preprocess GT image (enhanced)
+    opt.input_name = opt.gt_name  # Temporarily change to read GT
+    gt_ = functions.read_image(opt)
+    gt = imresize(gt_, opt.scale1, opt)
+    gt_ = resize_tensor_to_multiple_of_32(gt_, opt)
+    gts = []
+    gts = functions.creat_reals_pyramid(gt, gts, opt)
+    opt.input_name = opt.input_name.replace(opt.gt_name, opt.input_name)  # Restore original input name
     
     print(f"Created pyramid with {len(reals)} scales")
     for i, r in enumerate(reals):
@@ -101,10 +111,12 @@ def train_single_image_with_funiegan(opt):
         os.makedirs(opt.outf, exist_ok=True)
         print(f"Output directory: {opt.outf}")
 
-        # Get real image at current scale
-        real = reals[scale_num]
+        # Get real image (distorted) and GT at current scale
+        real = reals[scale_num]  # distorted image
+        gt = gts[scale_num]      # ground truth enhanced image
         opt.nzx, opt.nzy = real.shape[2], real.shape[3]
         print(f"Real image shape: {real.shape}")
+        print(f"GT image shape: {gt.shape}")
 
         # Initialize networks
         generator = GeneratorFunieGAN(opt.nc_im, opt.nc_im).to(opt.device)
@@ -121,7 +133,6 @@ def train_single_image_with_funiegan(opt):
         # Initialize loss functions
         mse = nn.MSELoss().to(opt.device)
         l1 = nn.L1Loss().to(opt.device)
-        adv_criterion = nn.MSELoss().to(opt.device)
         perceptual = VGG19_PercepLoss().to(opt.device)
 
         # Initialize padding
@@ -169,21 +180,21 @@ def train_single_image_with_funiegan(opt):
             # =================
             discriminator.zero_grad()
             
-            # Real loss
-            real_pred = discriminator(real, real)
-            real_loss = adv_criterion(real_pred, torch.ones_like(real_pred))
+            # Real loss - use GT (enhanced) image as real, distorted as condition
+            real_pred = discriminator(gt, real)
+            real_loss = mse(real_pred, torch.ones_like(real_pred))
             
-            # Fake loss
+            # Fake loss - use generated image as fake, distorted as condition
             fake = generator(noise.detach())
             fake_pred = discriminator(fake.detach(), real)
-            fake_loss = adv_criterion(fake_pred, torch.zeros_like(fake_pred))
+            fake_loss = mse(fake_pred, torch.zeros_like(fake_pred))
             
             # Total discriminator loss
             loss_D = 0.5 * (real_loss + fake_loss)
             
             # Add gradient penalty if specified
             if hasattr(opt, 'lambda_grad') and opt.lambda_grad > 0:
-                gradient_penalty = functions.calc_gradient_penalty(discriminator, real, fake, opt.lambda_grad, opt.device)
+                gradient_penalty = functions.calc_gradient_penalty(discriminator, gt, fake, opt.lambda_grad, opt.device)
                 loss_D += opt.lambda_grad * gradient_penalty
             
             loss_D.backward()
@@ -208,20 +219,22 @@ def train_single_image_with_funiegan(opt):
                 
             fake_pred = discriminator(fake, real)
 
-            if fake.shape[2:] != real.shape[2:]:
-                h = min(fake.shape[2], real.shape[2])
-                w = min(fake.shape[3], real.shape[3])
+            if fake.shape[2:] != gt.shape[2:]:
+                h = min(fake.shape[2], gt.shape[2])
+                w = min(fake.shape[3], gt.shape[3])
                 fake = fake[:, :, :h, :w]
-                real = real[:, :, :h, :w]
+                gt_resized = gt[:, :, :h, :w]
+            else:
+                gt_resized = gt
 
             # Adversarial loss
-            loss_adv = adv_criterion(fake_pred, torch.ones_like(fake_pred))
+            loss_adv = mse(fake_pred, torch.ones_like(fake_pred))
             
-            # L1 loss
-            loss_l1 = l1(fake, real)
+            # L1 loss - compare generated with GT (enhanced)
+            loss_l1 = l1(fake, gt_resized)
             
-            # Perceptual loss
-            loss_vgg = perceptual(fake, real)
+            # Perceptual loss - compare generated with GT (enhanced)
+            loss_vgg = perceptual(fake, gt_resized)
             
             # Total generator loss
             loss_G = loss_adv + 10 * loss_l1 + 3 * loss_vgg
@@ -244,9 +257,10 @@ def train_single_image_with_funiegan(opt):
                     fake_sample = generator(noise)
                     save_image(fake_sample, f"{opt.outf}/fake_epoch_{epoch}.png")
                     
-                    # Save real image for comparison
+                    # Save real and GT images for comparison
                     if epoch == 0:
-                        save_image(real, f"{opt.outf}/real.png")
+                        save_image(real, f"{opt.outf}/real_distorted.png")
+                        save_image(gt, f"{opt.outf}/gt_enhanced.png")
 
         # Store trained models
         Gs.append(generator.eval())
