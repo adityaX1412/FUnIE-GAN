@@ -154,9 +154,10 @@ def train_single_image_with_funiegan(opt):
             # Handle first scale differently
             if scale_num == 0:
                 prev = m_image(real)
-                z_prev = m_noise(noise_)
-                opt.noise_amp = 0.05  # minimal noise for robustness
-                noise = opt.noise_amp * z_prev + prev
+                #z_prev = m_noise(noise_)
+                #opt.noise_amp = 0.05  # minimal noise for robustness
+                #noise = opt.noise_amp * z_prev + prev
+                noise = prev
             else:
                 # Generate previous scale output
                 prev = functions.draw_concat(Gs, Zs, reals, NoiseAmp, in_s, 'rand', m_noise, m_image, opt)
